@@ -1,0 +1,206 @@
+@import url('https://fonts.googleapis.com/css2?family=Exo+2:wght@400;600;700&display=swap');
+    
+    body {
+      width: 300px;
+      padding: 0;
+      margin: 0;
+      font-family: 'Exo 2', 'Segoe UI', Tahoma, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      color: #fff;
+      overflow: hidden;
+      border-radius: 12px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    }
+    
+    .container {
+      padding: 20px;
+      background: rgba(22, 33, 62, 0.95);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255, 102, 170, 0.2);
+      border-radius: 12px;
+      margin: 8px;
+    }
+    
+    .header {
+      display: flex;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 2px solid #ff66aa;
+    }
+    
+    .osu-logo {
+      width: 32px;
+      height: 32px;
+      background: linear-gradient(135deg, #ff66aa 0%, #ff3388 100%);
+      border-radius: 50%;
+      margin-right: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      font-size: 18px;
+      color: white;
+      box-shadow: 0 0 15px rgba(255, 102, 170, 0.5);
+    }
+    
+    .title {
+      font-size: 20px;
+      font-weight: 700;
+      background: linear-gradient(135deg, #ff66aa 0%, #ffbbff 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      text-shadow: 0 0 10px rgba(255, 102, 170, 0.3);
+    }
+    
+    .now-playing {
+      font-size: 12px;
+      color: #aabbff;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+      display: flex;
+      align-items: center;
+    }
+    
+    .now-playing::before {
+      content: "";
+      display: inline-block;
+      width: 8px;
+      height: 8px;
+      background: #ff66aa;
+      border-radius: 50%;
+      margin-right: 8px;
+      animation: pulse 2s infinite;
+    }
+    
+    #song {
+      margin: 12px 0;
+      padding: 16px;
+      background: rgba(0, 0, 0, 0.3);
+      border-radius: 8px;
+      border-left: 4px solid #ff66aa;
+      font-size: 14px;
+      line-height: 1.4;
+      min-height: 20px;
+      word-wrap: break-word;
+      transition: all 0.3s ease;
+      box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.5);
+    }
+    
+    #song.playing {
+      background: rgba(255, 102, 170, 0.1);
+      border-left-color: #aabbff;
+      animation: glow 2s infinite alternate;
+    }
+    
+    #refresh {
+      width: 100%;
+      padding: 12px;
+      background: linear-gradient(135deg, #ff66aa 0%, #ff3388 100%);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-top: 16px;
+      position: relative;
+      overflow: hidden;
+    }
+    
+    #refresh:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(255, 102, 170, 0.4);
+    }
+    
+    #refresh:active {
+      transform: translateY(0);
+    }
+    
+    #refresh::after {
+      content: "";
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: linear-gradient(
+        45deg,
+        transparent 30%,
+        rgba(255, 255, 255, 0.1) 50%,
+        transparent 70%
+      );
+      transform: rotate(45deg);
+      transition: all 0.5s ease;
+    }
+    
+    #refresh:hover::after {
+      left: 100%;
+    }
+    
+    .footer {
+      margin-top: 16px;
+      font-size: 10px;
+      color: #6677aa;
+      text-align: center;
+      padding-top: 12px;
+      border-top: 1px solid rgba(255, 102, 170, 0.2);
+    }
+    
+    .beatmap-pulse {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: linear-gradient(90deg, #ff66aa, #aabbff, #ff66aa);
+      background-size: 200% 100%;
+      animation: beatmapLine 3s linear infinite;
+      border-radius: 12px 12px 0 0;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    
+    @keyframes glow {
+      from { box-shadow: 0 0 5px rgba(255, 102, 170, 0.3); }
+      to { box-shadow: 0 0 20px rgba(255, 102, 170, 0.6); }
+    }
+    
+    @keyframes beatmapLine {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+    
+    .beat-circle {
+      position: absolute;
+      width: 100px;
+      height: 100px;
+      background: radial-gradient(circle, rgba(255, 102, 170, 0.1) 0%, transparent 70%);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+    
+    .circle-1 {
+      top: -30px;
+      right: -30px;
+      animation: float 20s infinite linear;
+    }
+    
+    .circle-2 {
+      bottom: -40px;
+      left: -40px;
+      animation: float 25s infinite linear reverse;
+    }
+    
+    @keyframes float {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }

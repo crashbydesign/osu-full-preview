@@ -1,0 +1,16 @@
+# osu! Full Preview Extension
+
+<div align="center">
+
+![Extension Icon](images/icon.png)
+
+**Enhance your osu! browsing experience with full-length audio previews**
+
+[![Chrome Web Store](https://img.shields.io/badge/Chrome-Web%20Store-blue?logo=googlechrome&logoColor=white)](https://chrome.google.com/webstore/detail/osu-full-preview/)
+[![Version](https://img.shields.io/badge/version-1.0.0-purple.svg)](https://github.com/yourusername/osu-full-preview/releases)
+[![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
+*A Chrome extension that replaces short beatmap previews with complete songs*
+
+</div>
