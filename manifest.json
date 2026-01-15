@@ -2,7 +2,7 @@
 	"manifest_version": 3,
 	"name": "osu! Full Preview",
 	"version": "1.0.0",
-	"description": "Shows the currently playing osu! preview song.",
+	"description": "Listen to full song previews instead of only few seconds of it!",
 	"permissions": ["storage"],
 	"host_permissions": [
 		"https://osu.ppy.sh/*",
@@ -38,3 +38,4 @@
 		}
 	]
 }
+
