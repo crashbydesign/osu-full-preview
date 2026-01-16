@@ -311,8 +311,10 @@ async function handleFullPreviewRequest(button, panel) {
 	
 	if (button.classList.contains("ofp-ready")) {
 		restoreDefaultPreview(button, panel);
-
-		if (state.lastDetectedSong === buttonPanelSong && audioState !== "loading") {
+		console.log("last = ", state.lastDetectedSong)
+		console.log("btnPnlSng = ", buttonPanelSong)
+		console.log("");
+		if (state.lastDetectedSong && state.lastDetectedSong === buttonPanelSong) {
 			await reloadAudio(audioState === "paused");
 		}
 		return;
@@ -346,10 +348,9 @@ async function handleFullPreviewRequest(button, panel) {
 	updateButtonState(button, ICONS.READY, TOOLTIP.ENABLED, "ofp-ready");
 
 	// Reload audio if this is the currently playing/paused/loading song
-	if (state.lastDetectedSong !== buttonPanelSong) {
+	if (state.lastDetectedSong && state.lastDetectedSong !== buttonPanelSong) {
 		return;
 	}
-	
 	// Get the current audio state again after the async operations
 	const currentAudioState = panel.getAttribute("data-audio-state");
 	
@@ -400,7 +401,6 @@ function detectPlayingSong() {
 
 	if (!playingPanel) {
 		if (state.lastDetectedSong !== null) {
-			state.lastDetectedSong = null;
 			chrome.runtime.sendMessage({ type: "SONG_INFO", song: null });
 		}
 		return;
