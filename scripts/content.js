@@ -1,49 +1,32 @@
 console.log("[OFP] content.js loaded at", document.readyState);
 
+// ==================== CONFIGURATION ====================
 const CONFIG = {
 	MAX_CONCURRENT_FETCHES: 3,
 	MAX_CACHE_SIZE: 300,
+	RATE_LIMIT_DELAY: 333, // ms (3 requests per second)
+	FETCH_TIMEOUT: 10000, // ms
+	SONG_DETECTION_INTERVAL: 500, // ms
+	
+	// Timing constants for audio reload
+	TIMING: {
+		BUTTON_CLICK_DELAY: 100,
+		RELOAD_SEQUENCE_DELAY: 800,
+		PAUSE_AFTER_RELOAD: 800,
+	},
+	
 	AUDIO_CACHE: new Map(),
 };
 
 const AUDIO_SERVERS = [
-	'https://us.catboy.best',
-	'https://sg.catboy.best',
-	'https://catboy.best',
-	'https://central.catboy.best'
+	"https://us.catboy.best",
+	"https://sg.catboy.best",
+	"https://catboy.best",
+	"https://central.catboy.best",
 ];
 
-const rateLimitQueue = [];
-let processingQueue = false;
-
-async function waitForRateLimit() {
-	return new Promise((resolve) => {
-		rateLimitQueue.push(resolve);
-		if (!processingQueue) processQueue();
-	});
-}
-
-function processQueue() {
-	processingQueue = true;
-	try {
-		if (rateLimitQueue.length === 0) {
-			processingQueue = false;
-			return;
-		}
-
-		const resolve = rateLimitQueue.shift();
-		resolve();
-		// Limit to 3 requests per second
-		setTimeout(processQueue, 1000 / 3);
-	} catch (error) {
-		console.error("[OFP] Rate limiter error:", error);
-		processingQueue = false;
-		// Reset after error
-		setTimeout(processQueue, 1000);
-	}
-}
-
 const PREFIX = "osu!full preview :";
+
 const ICONS = {
 	IDLE: `<span class="fas fa-play-circle"></span>`,
 	LOADING: `<span class="fas fa-circle-notch fa-spin"></span>`,
@@ -57,105 +40,77 @@ const TOOLTIP = {
 	FAILED: "failed",
 };
 
-const state = {
-	beatmapCache: new Map(), // setId -> beatmapId
-	pendingFetches: new Map(), // setId -> Promise
-	activeFetches: 0,
-	lastDetectedSong: null,
-};
-
-// DOM Selectors
 const SELECTORS = {
 	BEATMAP_PANEL: ".beatmapset-panel.js-audio--player",
 	MENU_CONTAINER: ".beatmapset-panel__menu",
 	TITLE_ELEMENT: ".beatmapset-panel__info-row--title",
 	ARTIST_ELEMENT: ".beatmapset-panel__info-row--artist",
-	PLAYING_PANEL:
-		".beatmapset-panel.js-audio--player[data-audio-state='playing']",
+	PLAYING_PANEL: ".beatmapset-panel.js-audio--player[data-audio-state='playing']",
 	AUDIO_PLAYER: ".audio-player",
 	NEXT_BUTTON: ".audio-player__button--next.js-audio--nav",
 	PREV_BUTTON: ".audio-player__button--prev.js-audio--nav",
 	PLAY_BUTTON: ".js-audio--main-play",
 };
 
-function initializeStyles() {
-	const style = document.createElement("style");
-	style.textContent = `
-    .beatmapset-panel__menu-item.ofp-ready {
-      color: #ff94e8 !important;
-    }
-    .beatmapset-panel__menu-item.ofp-loading {
-      opacity: 0.6;
-    }
-  `;
-	(document.head || document.documentElement).appendChild(style);
-}
+// ==================== STATE MANAGEMENT ====================
+const state = {
+	beatmapCache: new Map(),
+	pendingFetches: new Map(),
+	activeFetches: 0,
+	lastDetectedSong: null,
+	observer: null,
+	detectionInterval: null,
+};
 
-function manageCacheSize() {
-	if (state.beatmapCache.size > CONFIG.MAX_CACHE_SIZE) {
-		state.beatmapCache.clear();
-	}
-}
+// ==================== RATE LIMITING ====================
+const rateLimitQueue = [];
+let processingQueue = false;
 
-async function fetchWithConcurrency(setId) {
+async function waitForRateLimit() {
 	return new Promise((resolve) => {
-		const attemptFetch = () => {
-			if (state.activeFetches < CONFIG.MAX_CONCURRENT_FETCHES) {
-				state.activeFetches++;
-
-				chrome.runtime.sendMessage(
-					{ type: "FETCH_BEATMAP_ID", setId },
-					(response) => {
-						state.activeFetches--;
-
-						const beatmapId = response?.id ?? null;
-						if (beatmapId) {
-							state.beatmapCache.set(setId, beatmapId);
-							manageCacheSize();
-						}
-
-						state.pendingFetches.delete(setId);
-						resolve(beatmapId);
-					}
-				);
-			} else {
-				setTimeout(attemptFetch, 50);
-			}
-		};
-
-		attemptFetch();
+		rateLimitQueue.push(resolve);
+		if (!processingQueue) processQueue();
 	});
 }
 
-async function fetchBeatmapId(setId) {
-	if (state.beatmapCache.has(setId)) {
-		return Promise.resolve(state.beatmapCache.get(setId));
+function processQueue() {
+	if (rateLimitQueue.length === 0) {
+		processingQueue = false;
+		return;
 	}
-
-	if (state.pendingFetches.has(setId)) {
-		return state.pendingFetches.get(setId);
-	}
-
-	const fetchPromise = fetchWithConcurrency(setId);
-	state.pendingFetches.set(setId, fetchPromise);
-
-	return fetchPromise;
+	processingQueue = true;
+	rateLimitQueue.shift()();
+	setTimeout(processQueue, CONFIG.RATE_LIMIT_DELAY);
 }
 
-function extractSetIdFromUrl(audioUrl) {
-	if (!audioUrl) return null;
+// ==================== UTILITIES ====================
+const DEBUG = false; // Set to true for development, false for production
 
-	const parts = audioUrl.split("/");
-	const filename = parts.pop();
-	const setId = filename?.replace(".mp3", "");
+function log(message, level = 'info', ...args) {
+	if (!DEBUG && level === 'info') return; // Only show warnings and errors in production
+	
+	const prefix = '[OFP]';
+	const methods = {
+		info: console.log,
+		warn: console.warn,
+		error: console.error,
+	};
+	(methods[level] || console.log)(prefix, message, ...args);
+}
 
-	return setId || null;
+function manageCache(map, key, value) {
+	if (map.has(key)) map.delete(key);
+	map.set(key, value);
+	if (map.size > CONFIG.MAX_CACHE_SIZE) {
+		map.delete(map.keys().next().value);
+	}
+}
+
+function extractSetIdFromUrl(url) {
+	return url?.split("/").pop()?.replace(".mp3", "") ?? null;
 }
 
 function getOriginalAudioUrl(panel) {
-	const titleElement = panel.querySelector(SELECTORS.TITLE_ELEMENT);
-	if (!titleElement) return null;
-
 	const link = panel.querySelector('a[href*="/beatmapsets/"]');
 	if (!link) return null;
 
@@ -165,73 +120,123 @@ function getOriginalAudioUrl(panel) {
 	return `https://b.ppy.sh/preview/${beatmapsetId}.mp3`;
 }
 
+function getPanelSongName(panel) {
+	const titleElement = panel.querySelector(SELECTORS.TITLE_ELEMENT);
+	const artistElement = panel.querySelector(SELECTORS.ARTIST_ELEMENT);
+
+	if (!titleElement || !artistElement) return null;
+
+	const artist = artistElement.textContent.replace("by ", "").trim();
+	const title = titleElement.textContent.trim();
+	return `${artist} - ${title}`;
+}
+
+// ==================== CACHE MANAGEMENT ====================
+function cleanupBlobUrls() {
+	for (const blobUrl of CONFIG.AUDIO_CACHE.values()) {
+		URL.revokeObjectURL(blobUrl);
+	}
+	CONFIG.AUDIO_CACHE.clear();
+}
+
+// ==================== API COMMUNICATION ====================
+async function fetchBeatmapId(setId) {
+	if (state.beatmapCache.has(setId)) {
+		return state.beatmapCache.get(setId);
+	}
+
+	if (state.pendingFetches.has(setId)) {
+		return state.pendingFetches.get(setId);
+	}
+
+	const promise = new Promise((resolve) => {
+		const attempt = () => {
+			if (state.activeFetches < CONFIG.MAX_CONCURRENT_FETCHES) {
+				state.activeFetches++;
+				chrome.runtime.sendMessage(
+					{ type: "FETCH_BEATMAP_ID", setId },
+					(response) => {
+						state.activeFetches--;
+						state.pendingFetches.delete(setId);
+						
+						if (!response) {
+							log(`No response for beatmap ID ${setId}`, 'error');
+							resolve(null);
+							return;
+						}
+						
+						const { id } = response;
+						if (id) {
+							manageCache(state.beatmapCache, setId, id);
+						}
+						resolve(id ?? null);
+					}
+				);
+			} else {
+				setTimeout(attempt, 50);
+			}
+		};
+		attempt();
+	});
+
+	state.pendingFetches.set(setId, promise);
+	return promise;
+}
+
+async function downloadAndCacheAudio(beatmapId) {
+	if (CONFIG.AUDIO_CACHE.has(beatmapId)) {
+		return CONFIG.AUDIO_CACHE.get(beatmapId);
+	}
+
+	for (const server of AUDIO_SERVERS) {
+		try {
+			await waitForRateLimit();
+			
+			const res = await fetch(`${server}/preview/audio/${beatmapId}/full`, {
+				signal: AbortSignal.timeout(CONFIG.FETCH_TIMEOUT),
+			});
+			
+			if (!res.ok) continue;
+
+			const blob = await res.blob();
+			if (blob.size < 1000) continue;
+
+			const url = URL.createObjectURL(blob);
+			manageCache(CONFIG.AUDIO_CACHE, beatmapId, url);
+			log(`Downloaded audio for beatmap ${beatmapId}`);
+			return url;
+		} catch (error) {
+			log(`Download failed from ${server}: ${error.message}`, 'warn');
+		}
+	}
+	
+	log(`All servers failed for beatmap ${beatmapId}`, 'error');
+	return null;
+}
+
+// ==================== UI ====================
+function initializeStyles() {
+	const style = document.createElement("style");
+	style.textContent = `
+		.beatmapset-panel__menu-item.ofp-ready {
+			color: #ff94e8 !important;
+		}
+		.beatmapset-panel__menu-item.ofp-loading {
+			opacity: 0.6;
+		}
+	`;
+	(document.head || document.documentElement).appendChild(style);
+}
+
 function updateButtonState(button, icon, tooltip, className = "") {
 	button.innerHTML = icon;
 	button.setAttribute("data-orig-title", tooltip);
 	button.setAttribute("title", `${PREFIX} ${tooltip}`);
 
 	button.classList.remove("ofp-loading", "ofp-ready");
-
 	if (className) {
 		button.classList.add(className);
 	}
-}
-
-// reload audio with updated source by quickly playing a different audio and switching back which triggers the load() in internal osu audio/main.ts code
-async function reloadAudio(paused) {
-	return new Promise((resolve) => {
-		const nextButton = document.querySelector(SELECTORS.NEXT_BUTTON);
-		const playButton = document.querySelector(SELECTORS.PLAY_BUTTON);
-		const prevButton = document.querySelector(SELECTORS.PREV_BUTTON);
-		const player = document.querySelector(SELECTORS.AUDIO_PLAYER);
-
-		if (!nextButton || !prevButton || !player) {
-			console.log("[OFP] Could not find next/prev buttons");
-			resolve();
-			return;
-		}
-
-		const hasNext = player.getAttribute("data-audio-has-next") === "1";
-		const hasPrev = player.getAttribute("data-audio-has-prev") === "1";
-
-		if (!hasPrev && !hasNext) {
-			console.log("[OFP] next and prev unavailable");
-			resolve();
-			return;
-		}
-
-		if (!hasNext) {
-			console.log("[OFP] Last panel → using prev → next");
-
-			prevButton.click();
-			setTimeout(() => {
-				playButton.click();
-			}, 100);
-
-			setTimeout(() => {
-				nextButton.click();
-				resolve();
-			}, 800);
-		} else {
-			console.log("[OFP] Normal panel → using next → prev");
-
-			nextButton.click();
-			setTimeout(() => {
-				playButton.click();
-			}, 100);
-
-			setTimeout(() => {
-				prevButton.click();
-				resolve();
-			}, 800);
-		}
-
-		if (paused) {
-			setTimeout(() => {
-				playButton.click();
-			}, 800);
-		}
-	});
 }
 
 function restoreDefaultPreview(button, panel) {
@@ -243,7 +248,6 @@ function restoreDefaultPreview(button, panel) {
 	}
 
 	const blobUrl = panel.getAttribute("data-audio-url");
-	// Check if we need to revoke blob URL
 	if (panel.getAttribute("data-ofp-blob") === "true" && blobUrl) {
 		URL.revokeObjectURL(blobUrl);
 		panel.removeAttribute("data-ofp-blob");
@@ -252,23 +256,64 @@ function restoreDefaultPreview(button, panel) {
 	updateButtonState(button, ICONS.IDLE, TOOLTIP.ENABLE);
 }
 
-function cleanupBlobUrls() {
-	for (const blobUrl of CONFIG.AUDIO_CACHE.values()) {
-		URL.revokeObjectURL(blobUrl);
-	}
-	CONFIG.AUDIO_CACHE.clear();
+// ==================== AUDIO CONTROL ====================
+async function reloadAudio(paused) {
+	return new Promise((resolve) => {
+		const nextButton = document.querySelector(SELECTORS.NEXT_BUTTON);
+		const playButton = document.querySelector(SELECTORS.PLAY_BUTTON);
+		const prevButton = document.querySelector(SELECTORS.PREV_BUTTON);
+		const player = document.querySelector(SELECTORS.AUDIO_PLAYER);
+
+		if (!nextButton || !prevButton || !player) {
+			log("Could not find navigation buttons", 'warn');
+			resolve();
+			return;
+		}
+
+		const hasNext = player.getAttribute("data-audio-has-next") === "1";
+		const hasPrev = player.getAttribute("data-audio-has-prev") === "1";
+
+		if (!hasPrev && !hasNext) {
+			log("Next and prev unavailable", 'warn');
+			resolve();
+			return;
+		}
+
+		const { BUTTON_CLICK_DELAY, RELOAD_SEQUENCE_DELAY, PAUSE_AFTER_RELOAD } = CONFIG.TIMING;
+
+		if (!hasNext) {
+			// prev -> next
+			prevButton.click();
+			setTimeout(() => playButton.click(), BUTTON_CLICK_DELAY);
+			setTimeout(() => {
+				nextButton.click();
+				resolve();
+			}, RELOAD_SEQUENCE_DELAY);
+		} else {
+			// next -> prev
+			nextButton.click();
+			setTimeout(() => playButton.click(), BUTTON_CLICK_DELAY);
+			setTimeout(() => {
+				prevButton.click();
+				resolve();
+			}, RELOAD_SEQUENCE_DELAY);
+		}
+
+		if (paused) {
+			setTimeout(() => playButton.click(), PAUSE_AFTER_RELOAD);
+		}
+	});
 }
 
-window.addEventListener("beforeunload", cleanupBlobUrls);
-
 async function handleFullPreviewRequest(button, panel) {
-	const state = panel.getAttribute("data-audio-state");
-
+	const buttonPanelSong = getPanelSongName(panel);
+	const audioState = panel.getAttribute("data-audio-state");
+	
 	if (button.classList.contains("ofp-ready")) {
 		restoreDefaultPreview(button, panel);
 
-		if (state !== "loading") {
-			await reloadAudio(state === "paused");
+		if (state.lastDetectedSong === buttonPanelSong && audioState !== "loading") {
+			await reloadAudio(audioState === "paused");
 		}
 		return;
 	}
@@ -279,19 +324,18 @@ async function handleFullPreviewRequest(button, panel) {
 	const setId = extractSetIdFromUrl(audioUrl);
 
 	if (!setId) {
+		log('Could not extract set ID from audio URL', 'error');
 		updateButtonState(button, ICONS.IDLE, TOOLTIP.FAILED);
 		return;
 	}
 
 	const beatmapId = await fetchBeatmapId(setId);
-
 	if (!beatmapId) {
 		updateButtonState(button, ICONS.IDLE, TOOLTIP.FAILED);
 		return;
 	}
 
 	const blobUrl = await downloadAndCacheAudio(beatmapId);
-
 	if (!blobUrl) {
 		updateButtonState(button, ICONS.IDLE, TOOLTIP.FAILED);
 		return;
@@ -299,18 +343,25 @@ async function handleFullPreviewRequest(button, panel) {
 
 	panel.setAttribute("data-audio-url", blobUrl);
 	panel.setAttribute("data-ofp-blob", "true");
-
-	if (state === "paused") {
-		await reloadAudio(true);
-	}
-
 	updateButtonState(button, ICONS.READY, TOOLTIP.ENABLED, "ofp-ready");
 
-	if (state === "playing") {
-		await reloadAudio();
+	// Reload audio if this is the currently playing/paused/loading song
+	if (state.lastDetectedSong !== buttonPanelSong) {
+		return;
+	}
+	
+	// Get the current audio state again after the async operations
+	const currentAudioState = panel.getAttribute("data-audio-state");
+	
+	if (currentAudioState === "paused") {
+		await reloadAudio(true);
+	} else if (currentAudioState === "playing" || currentAudioState === "loading") {
+		// Reload for both playing and loading states
+		await reloadAudio(false);
 	}
 }
 
+// ==================== MENU BUTTON ====================
 function createMenuButton() {
 	const button = document.createElement("button");
 	button.type = "button";
@@ -322,7 +373,7 @@ function createMenuButton() {
 		event.stopPropagation();
 		event.preventDefault();
 
-		const panel = button.closest(SELECTORS.BEATMAP_PANEL);
+		const panel = event.target.closest(SELECTORS.BEATMAP_PANEL);
 		if (panel) {
 			await handleFullPreviewRequest(button, panel);
 		}
@@ -333,9 +384,7 @@ function createMenuButton() {
 
 function injectMenuButton(panel) {
 	const menu = panel.querySelector(SELECTORS.MENU_CONTAINER);
-	if (!menu) return;
-
-	if (menu.querySelector(".ofp-menu-item")) return;
+	if (!menu || menu.querySelector(".ofp-menu-item")) return;
 
 	const button = createMenuButton();
 	menu.appendChild(button);
@@ -345,56 +394,7 @@ function attachMenuButtons() {
 	document.querySelectorAll(SELECTORS.BEATMAP_PANEL).forEach(injectMenuButton);
 }
 
-async function downloadAndCacheAudio(beatmapId) {
-	if (CONFIG.AUDIO_CACHE.has(beatmapId)) {
-		return CONFIG.AUDIO_CACHE.get(beatmapId);
-	}
-
-	let lastError = null;
-	
-	for (const serverUrl of AUDIO_SERVERS) {
-		try {
-			await waitForRateLimit();
-
-			const audioUrl = `${serverUrl}/preview/audio/${beatmapId}/full`;
-			console.log(`[OFP] Trying audio from: ${audioUrl}`);
-			
-			const response = await fetch(audioUrl, {
-				signal: AbortSignal.timeout(10000)
-			});
-
-			if (!response.ok) {
-				throw new Error(`HTTP ${response.status} from ${serverUrl}`);
-			}
-
-			const audioBlob = await response.blob();
-			
-			if (audioBlob.size < 1000) {
-				throw new Error(`Audio too small (${audioBlob.size} bytes) from ${serverUrl}`);
-			}
-			
-			if (!audioBlob.type.startsWith('audio/') && audioBlob.type !== 'application/octet-stream') {
-				console.warn(`[OFP] Unexpected content type: ${audioBlob.type} from ${serverUrl}`);
-			}
-
-			const blobUrl = URL.createObjectURL(audioBlob);
-
-			CONFIG.AUDIO_CACHE.set(beatmapId, blobUrl);
-			console.log(`[OFP] Audio cached successfully from ${serverUrl}`);
-
-			return blobUrl;
-			
-		} catch (error) {
-			console.error(`[OFP] Failed to download audio from ${serverUrl}:`, error.message);
-			lastError = error;
-			continue;
-		}
-	}
-	
-	console.error("[OFP] All audio servers failed:", lastError?.message);
-	return null;
-}
-
+// ==================== SONG DETECTION ====================
 function detectPlayingSong() {
 	const playingPanel = document.querySelector(SELECTORS.PLAYING_PANEL);
 
@@ -406,37 +406,51 @@ function detectPlayingSong() {
 		return;
 	}
 
-	const titleElement = playingPanel.querySelector(SELECTORS.TITLE_ELEMENT);
-	const artistElement = playingPanel.querySelector(SELECTORS.ARTIST_ELEMENT);
+	const currentSong = getPanelSongName(playingPanel);
 
-	if (!titleElement || !artistElement) return;
-
-	const artist = artistElement.textContent.replace("by ", "").trim();
-	const title = titleElement.textContent.trim();
-	const currentSong = `${artist} - ${title}`;
-
-	if (currentSong !== state.lastDetectedSong) {
+	if (currentSong && currentSong !== state.lastDetectedSong) {
 		state.lastDetectedSong = currentSong;
 		chrome.runtime.sendMessage({ type: "SONG_INFO", song: currentSong });
 	}
 }
 
+// ==================== CLEANUP ====================
+function cleanup() {
+	cleanupBlobUrls();
+	rateLimitQueue.length = 0;
+	
+	if (state.observer) {
+		state.observer.disconnect();
+		state.observer = null;
+	}
+	
+	if (state.detectionInterval) {
+		clearInterval(state.detectionInterval);
+		state.detectionInterval = null;
+	}
+}
+
+// ==================== INITIALIZATION ====================
 function initialize() {
-	window.addEventListener("beforeunload", () => {
-		cleanupBlobUrls();
-		rateLimitQueue.length = 0; // Clear any pending rate limit requests
-	});
+	log('Extension initialized');
+	
+	window.addEventListener("beforeunload", cleanup);
 
 	initializeStyles();
 	attachMenuButtons();
 
-	const observer = new MutationObserver(attachMenuButtons);
-	observer.observe(document.documentElement, {
+	state.observer = new MutationObserver(attachMenuButtons);
+	state.observer.observe(document.documentElement, {
 		childList: true,
 		subtree: true,
 	});
 
-	setInterval(detectPlayingSong, 500);
+	state.detectionInterval = setInterval(() => {
+		if (!document.hidden) {
+			detectPlayingSong();
+		}
+	}, CONFIG.SONG_DETECTION_INTERVAL);
+
 	detectPlayingSong();
 }
 
