@@ -2,8 +2,12 @@
 	"manifest_version": 3,
 	"name": "osu! Full Preview",
 	"version": "1.0.0",
-	"description": "Listen to full song previews instead of only few seconds of it!",
+	"description": "Listen to full song previews on osu.ppy.sh beatmap listings. Click the button next to any beatmap to load the complete audio track.",
+	"author": "Krrish",
+	"homepage_url": "https://github.com/crashbydesign/osu-full-preview",
+	
 	"permissions": ["storage"],
+	
 	"host_permissions": [
 		"https://osu.ppy.sh/*",
 		"https://catboy.best/*",
@@ -11,15 +15,19 @@
 		"https://us.catboy.best/*",
 		"https://sg.catboy.best/*"
 	],
+	
 	"icons": {
 		"16": "images/icon.png",
 		"32": "images/icon.png",
 		"48": "images/icon.png",
 		"128": "images/icon.png"
 	},
+	
 	"background": {
-		"service_worker": "background.js"
+		"service_worker": "background.js",
+		"type": "module"
 	},
+	
 	"action": {
 		"default_popup": "popup/popup.html",
 		"default_icon": {
@@ -27,15 +35,19 @@
 			"32": "images/icon.png",
 			"48": "images/icon.png",
 			"128": "images/icon.png"
-		}
+		},
+		"default_title": "osu! Full Preview"
 	},
-
+	
 	"content_scripts": [
 		{
-			"matches": ["*://osu.ppy.sh/*"],
+			"matches": ["https://osu.ppy.sh/*"],
 			"js": ["scripts/content.js"],
 			"run_at": "document_start"
 		}
-	]
+	],
+	
+	"content_security_policy": {
+		"extension_pages": "script-src 'self'; object-src 'self'"
+	}
 }
-
