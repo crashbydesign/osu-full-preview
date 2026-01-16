@@ -311,9 +311,6 @@ async function handleFullPreviewRequest(button, panel) {
 	
 	if (button.classList.contains("ofp-ready")) {
 		restoreDefaultPreview(button, panel);
-		console.log("last = ", state.lastDetectedSong)
-		console.log("btnPnlSng = ", buttonPanelSong)
-		console.log("");
 		if (state.lastDetectedSong && state.lastDetectedSong === buttonPanelSong) {
 			await reloadAudio(audioState === "paused");
 		}
