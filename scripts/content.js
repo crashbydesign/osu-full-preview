@@ -4,26 +4,50 @@ console.log("[OFP] content.js loaded at", document.readyState);
 const CONFIG = {
 	MAX_CONCURRENT_FETCHES: 3,
 	MAX_CACHE_SIZE: 300,
-	RATE_LIMIT_DELAY: 333, // ms (3 requests per second)
+	RATE_LIMIT_DELAY: 1000, // ms (1 request per second)
 	FETCH_TIMEOUT: 10000, // ms
 	SONG_DETECTION_INTERVAL: 500, // ms
-	
+
 	// Timing constants for audio reload
 	TIMING: {
 		BUTTON_CLICK_DELAY: 100,
 		RELOAD_SEQUENCE_DELAY: 800,
 		PAUSE_AFTER_RELOAD: 800,
 	},
-	
+
 	AUDIO_CACHE: new Map(),
 };
 
-const AUDIO_SERVERS = [
+const STORAGE_KEY = "serverPenalties";
+const SERVER_URLS = [
+	"https://catboy.best",
 	"https://us.catboy.best",
 	"https://sg.catboy.best",
-	"https://catboy.best",
 	"https://central.catboy.best",
 ];
+
+async function getAudioServersByPriority() {
+	const penalties = await loadAudioPenalties();
+
+	return SERVER_URLS.map((url) => ({
+		url,
+		penalty: penalties[url]?.audio ?? 0,
+	})).sort((a, b) => a.penalty - b.penalty);
+}
+
+async function loadAudioPenalties() {
+	const data = await chrome.storage.local.get(STORAGE_KEY);
+	return data[STORAGE_KEY] ?? {};
+}
+
+async function updateAudioPenalty(url, delta) {
+	const penalties = await loadAudioPenalties();
+
+	penalties[url] ??= { api: 0, audio: 0 };
+	penalties[url].audio = Math.max(0, penalties[url].audio + delta);
+
+	await chrome.storage.local.set({ [STORAGE_KEY]: penalties });
+}
 
 const PREFIX = "osu!full preview :";
 
@@ -31,6 +55,7 @@ const ICONS = {
 	IDLE: `<span class="fas fa-play-circle"></span>`,
 	LOADING: `<span class="fas fa-circle-notch fa-spin"></span>`,
 	READY: `<span class="fas fa-play-circle"></span>`,
+	FAILED: `<span class="fas fa-play-circle"></span>`,
 };
 
 const TOOLTIP = {
@@ -45,7 +70,8 @@ const SELECTORS = {
 	MENU_CONTAINER: ".beatmapset-panel__menu",
 	TITLE_ELEMENT: ".beatmapset-panel__info-row--title",
 	ARTIST_ELEMENT: ".beatmapset-panel__info-row--artist",
-	PLAYING_PANEL: ".beatmapset-panel.js-audio--player[data-audio-state='playing']",
+	PLAYING_PANEL:
+		".beatmapset-panel.js-audio--player[data-audio-state='playing']",
 	AUDIO_PLAYER: ".audio-player",
 	NEXT_BUTTON: ".audio-player__button--next.js-audio--nav",
 	PREV_BUTTON: ".audio-player__button--prev.js-audio--nav",
@@ -86,10 +112,10 @@ function processQueue() {
 // ==================== UTILITIES ====================
 const DEBUG = false; // Set to true for development, false for production
 
-function log(message, level = 'info', ...args) {
-	if (!DEBUG && level === 'info') return; // Only show warnings and errors in production
-	
-	const prefix = '[OFP]';
+function log(message, level = "info", ...args) {
+	if (!DEBUG && level === "info") return; // Only show warnings and errors in production
+
+	const prefix = "[OFP]";
 	const methods = {
 		info: console.log,
 		warn: console.warn,
@@ -149,7 +175,22 @@ async function fetchBeatmapId(setId) {
 		return state.pendingFetches.get(setId);
 	}
 
+	if (!navigator.onLine) {
+		log("User Offline - Could not fetch beatmapId", "warn");
+		return null;
+	}
+
 	const promise = new Promise((resolve) => {
+		let resolved = false;
+		const timeoutId = setTimeout(() => {
+			if (!resolved) {
+				resolved = true;
+				state.pendingFetches.delete(setId);
+				log(`fetchBeatmapId timeout for setId ${setId}`, "warn");
+				resolve(null);
+			}
+		}, 15000); // 15 second timeout
+
 		const attempt = () => {
 			if (state.activeFetches < CONFIG.MAX_CONCURRENT_FETCHES) {
 				state.activeFetches++;
@@ -158,19 +199,24 @@ async function fetchBeatmapId(setId) {
 					(response) => {
 						state.activeFetches--;
 						state.pendingFetches.delete(setId);
-						
-						if (!response) {
-							log(`No response for beatmap ID ${setId}`, 'error');
-							resolve(null);
-							return;
+
+						if (!resolved) {
+							resolved = true;
+							clearTimeout(timeoutId);
+
+							if (!response) {
+								log(`No response for beatmap ID ${setId}`, "error");
+								resolve(null);
+								return;
+							}
+
+							const { id } = response;
+							if (id) {
+								manageCache(state.beatmapCache, setId, id);
+							}
+							resolve(id ?? null);
 						}
-						
-						const { id } = response;
-						if (id) {
-							manageCache(state.beatmapCache, setId, id);
-						}
-						resolve(id ?? null);
-					}
+					},
 				);
 			} else {
 				setTimeout(attempt, 50);
@@ -188,14 +234,20 @@ async function downloadAndCacheAudio(beatmapId) {
 		return CONFIG.AUDIO_CACHE.get(beatmapId);
 	}
 
-	for (const server of AUDIO_SERVERS) {
+	if (!navigator.onLine) {
+		log("User Offline - Could not fetch Audio", "warn");
+		return null;
+	}
+
+	const servers = await getAudioServersByPriority();
+	for (const server of servers) {
 		try {
 			await waitForRateLimit();
-			
-			const res = await fetch(`${server}/preview/audio/${beatmapId}/full`, {
+
+			const res = await fetch(`${server.url}/preview/audio/${beatmapId}/full`, {
 				signal: AbortSignal.timeout(CONFIG.FETCH_TIMEOUT),
 			});
-			
+
 			if (!res.ok) continue;
 
 			const blob = await res.blob();
@@ -203,14 +255,16 @@ async function downloadAndCacheAudio(beatmapId) {
 
 			const url = URL.createObjectURL(blob);
 			manageCache(CONFIG.AUDIO_CACHE, beatmapId, url);
+			await updateAudioPenalty(server.url, -1);
 			log(`Downloaded audio for beatmap ${beatmapId}`);
 			return url;
 		} catch (error) {
-			log(`Download failed from ${server}: ${error.message}`, 'warn');
+			await updateAudioPenalty(server.url, +2);
+			log(`Download failed from ${server.url}: ${error.message}`, "warn");
 		}
 	}
-	
-	log(`All servers failed for beatmap ${beatmapId}`, 'error');
+
+	log(`All servers failed for beatmap ${beatmapId}`, "error");
 	return null;
 }
 
@@ -218,12 +272,16 @@ async function downloadAndCacheAudio(beatmapId) {
 function initializeStyles() {
 	const style = document.createElement("style");
 	style.textContent = `
-		.beatmapset-panel__menu-item.ofp-ready {
-			color: #ff94e8 !important;
+		.beatmapset-panel__menu-item.ofp-failed { 
+			color: #ce4646 !important;
+		}
+		.beatmapset-panel__menu-item.ofp-ready { 
+			color: #f36aaa !important;
 		}
 		.beatmapset-panel__menu-item.ofp-loading {
 			opacity: 0.6;
 		}
+		
 	`;
 	(document.head || document.documentElement).appendChild(style);
 }
@@ -233,7 +291,7 @@ function updateButtonState(button, icon, tooltip, className = "") {
 	button.setAttribute("data-orig-title", tooltip);
 	button.setAttribute("title", `${PREFIX} ${tooltip}`);
 
-	button.classList.remove("ofp-loading", "ofp-ready");
+	button.classList.remove("ofp-loading", "ofp-ready", "ofp-failed");
 	if (className) {
 		button.classList.add(className);
 	}
@@ -265,7 +323,7 @@ async function reloadAudio(paused) {
 		const player = document.querySelector(SELECTORS.AUDIO_PLAYER);
 
 		if (!nextButton || !prevButton || !player) {
-			log("Could not find navigation buttons", 'warn');
+			log("Could not find navigation buttons", "warn");
 			resolve();
 			return;
 		}
@@ -274,12 +332,13 @@ async function reloadAudio(paused) {
 		const hasPrev = player.getAttribute("data-audio-has-prev") === "1";
 
 		if (!hasPrev && !hasNext) {
-			log("Next and prev unavailable", 'warn');
+			log("Next and prev unavailable", "warn");
 			resolve();
 			return;
 		}
 
-		const { BUTTON_CLICK_DELAY, RELOAD_SEQUENCE_DELAY, PAUSE_AFTER_RELOAD } = CONFIG.TIMING;
+		const { BUTTON_CLICK_DELAY, RELOAD_SEQUENCE_DELAY, PAUSE_AFTER_RELOAD } =
+			CONFIG.TIMING;
 
 		if (!hasNext) {
 			// prev -> next
@@ -308,7 +367,7 @@ async function reloadAudio(paused) {
 async function handleFullPreviewRequest(button, panel) {
 	const buttonPanelSong = getPanelSongName(panel);
 	const audioState = panel.getAttribute("data-audio-state");
-	
+
 	if (button.classList.contains("ofp-ready")) {
 		restoreDefaultPreview(button, panel);
 		if (state.lastDetectedSong && state.lastDetectedSong === buttonPanelSong) {
@@ -323,20 +382,22 @@ async function handleFullPreviewRequest(button, panel) {
 	const setId = extractSetIdFromUrl(audioUrl);
 
 	if (!setId) {
-		log('Could not extract set ID from audio URL', 'error');
-		updateButtonState(button, ICONS.IDLE, TOOLTIP.FAILED);
+		log("Could not extract set ID from audio URL", "error");
+		updateButtonState(button, ICONS.FAILED, TOOLTIP.FAILED, "ofp-failed");
 		return;
 	}
 
 	const beatmapId = await fetchBeatmapId(setId);
 	if (!beatmapId) {
-		updateButtonState(button, ICONS.IDLE, TOOLTIP.FAILED);
+		log("Could not fetch beatmapId", "error");
+		updateButtonState(button, ICONS.FAILED, TOOLTIP.FAILED, "ofp-failed");
 		return;
 	}
 
 	const blobUrl = await downloadAndCacheAudio(beatmapId);
 	if (!blobUrl) {
-		updateButtonState(button, ICONS.IDLE, TOOLTIP.FAILED);
+		log("downloadAndCacheAudio failed", "error");
+		updateButtonState(button, ICONS.FAILED, TOOLTIP.FAILED, "ofp-failed");
 		return;
 	}
 
@@ -350,10 +411,13 @@ async function handleFullPreviewRequest(button, panel) {
 	}
 	// Get the current audio state again after the async operations
 	const currentAudioState = panel.getAttribute("data-audio-state");
-	
+
 	if (currentAudioState === "paused") {
 		await reloadAudio(true);
-	} else if (currentAudioState === "playing" || currentAudioState === "loading") {
+	} else if (
+		currentAudioState === "playing" ||
+		currentAudioState === "loading"
+	) {
 		// Reload for both playing and loading states
 		await reloadAudio(false);
 	}
@@ -414,13 +478,13 @@ function detectPlayingSong() {
 // ==================== CLEANUP ====================
 function cleanup() {
 	cleanupBlobUrls();
-	rateLimitQueue.length = 0;
-	
+	rateLimitQueue.splice(0);
+
 	if (state.observer) {
 		state.observer.disconnect();
 		state.observer = null;
 	}
-	
+
 	if (state.detectionInterval) {
 		clearInterval(state.detectionInterval);
 		state.detectionInterval = null;
@@ -429,8 +493,8 @@ function cleanup() {
 
 // ==================== INITIALIZATION ====================
 function initialize() {
-	log('Extension initialized');
-	
+	log("Extension initialized");
+
 	window.addEventListener("beforeunload", cleanup);
 
 	initializeStyles();
