@@ -13,8 +13,9 @@
 
 *A Chrome extension that replaces short beatmap previews with complete songs*
 
-![Screenshot](https://i.postimg.cc/htrJpXPL/osu-Full-Preview-Screenshot.png)
+![Screenshot](https://i.postimg.cc/yxFV8ccT/osu-Full-Preview-Screenshot.png)
 
 </div>
+
 
 
