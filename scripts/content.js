@@ -459,20 +459,16 @@ function attachMenuButtons() {
 // ==================== SONG DETECTION ====================
 function detectPlayingSong() {
 	const playingPanel = document.querySelector(SELECTORS.PLAYING_PANEL);
-
+	console.log(playingPanel);
 	if (!playingPanel) {
-		if (state.lastDetectedSong !== null) {
-			chrome.runtime.sendMessage({ type: "SONG_INFO", song: null });
-		}
+		chrome.runtime.sendMessage({ type: "SONG_INFO", song: null });
 		return;
 	}
-
 	const currentSong = getPanelSongName(playingPanel);
-
 	if (currentSong && currentSong !== state.lastDetectedSong) {
 		state.lastDetectedSong = currentSong;
-		chrome.runtime.sendMessage({ type: "SONG_INFO", song: currentSong });
 	}
+	chrome.runtime.sendMessage({ type: "SONG_INFO", song: currentSong });
 }
 
 // ==================== CLEANUP ====================
