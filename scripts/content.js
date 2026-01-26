@@ -459,7 +459,6 @@ function attachMenuButtons() {
 // ==================== SONG DETECTION ====================
 function detectPlayingSong() {
 	const playingPanel = document.querySelector(SELECTORS.PLAYING_PANEL);
-	console.log(playingPanel);
 	if (!playingPanel) {
 		chrome.runtime.sendMessage({ type: "SONG_INFO", song: null });
 		return;
@@ -512,3 +511,4 @@ function initialize() {
 }
 
 initialize();
+
