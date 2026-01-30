@@ -15,7 +15,10 @@
 
 ![Screenshot](https://i.postimg.cc/yxFV8ccT/osu-Full-Preview-Screenshot.png)
 
+<video src="https://github.com/user-attachments/assets/da289e0d-0c4f-4cea-8f58-cedec80adfdb" width="700" controls></video>
+
 </div>
+
 
 
 
